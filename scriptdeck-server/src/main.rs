@@ -11,7 +11,7 @@ use dotenvy::dotenv;
 use log::{info, debug, error, warn};
 use proto::{C2SGlobal, L2G};
 use rand::Rng;
-use rhai::{Engine, AST, ImmutableString, EvalAltResult};
+use rhai::{Engine, AST, ImmutableString, Dynamic};
 
 use crate::proto::{S2C, C2S, C2SLocal};
 
@@ -136,9 +136,18 @@ impl Default for Global {
 
         let sessions = glob.sessions.clone();
         // TODO: Look for a way to just grab the caller id from the running script? Maybe?
-        glob.engine.register_fn("reply", move |msg: ImmutableString, caller: usize| {
+        glob.engine.register_fn("reply", move |msg: ImmutableString, caller: i64| {
             let sessions = sessions.read().unwrap();
-            match sessions.get(&caller) {
+
+            let id: usize = match caller.try_into() {
+                Ok(a) => a,
+                Err(_) => {
+                    error!("Script called reply with negative caller id");
+                    return
+                },
+            };
+
+            match sessions.get(&id) {
                 Some(a) => {
                     a.do_send(S2C::Reply { msg: msg.to_string() });
                 },
@@ -197,8 +206,7 @@ impl Global {
                 a.clone()
             },
             None => {
-                let ast = self.load_script(name)?;
-                ast
+                self.load_script(name)?
             },
         };
 
@@ -206,6 +214,19 @@ impl Global {
         let header_ast = self.engine.compile(local_header)?;
 
         Ok(header_ast.merge(&original_ast))
+    }
+
+    fn do_send_to_client(&self, msg: S2C, client_id: usize) {
+        // If this RwLock ever gets poisoned we're FUCKED
+        let sessions = self.sessions.read().unwrap();
+        match sessions.get(&client_id) {
+            Some(c) => {
+                c.do_send(msg);
+            },
+            None => {
+                warn!("Tried to send message {:?} to invalid client {client_id}", msg);
+            },
+        }
     }
 }
 
@@ -218,6 +239,29 @@ impl Handler<L2G> for Global {
         #[allow(unused)]
         use C2SGlobal as MSG;
         match msg {
+            MSG::RunScript { script } => {
+                let script = match self.get_script(&script, id) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        warn!("Error loading script {script}: {e}");
+                        // TODO: Return actually useful errors to the client
+                        self.do_send_to_client(S2C::InternalError, id);
+                        return
+                    },
+                };
+
+                match self.engine.eval_ast::<Dynamic>(&script) {
+                    Ok(a) => {
+                        if a.is_string() {
+                            self.do_send_to_client(S2C::Reply { msg: a.into_string().unwrap() }, id);
+                        }
+                    },
+                    Err(e) => {
+                        error!("Error running script: {e}");
+                        self.do_send_to_client(S2C::InternalError, id);
+                    },
+                };
+            }
         }
     }
 }

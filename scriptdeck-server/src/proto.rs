@@ -25,6 +25,8 @@ pub struct L2G {
 /// Passing to global needs to be done when global state, like the rhai engine, is required to
 /// process the message
 pub enum C2SGlobal {
+    /// Runs a rhai script from the src/rhai directory
+    RunScript { script: String }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -40,6 +42,7 @@ pub enum C2SLocal {
 #[derive(Debug, Serialize, Deserialize, Clone, Message)]
 #[serde(tag = "type")]
 #[rtype(result = "()")]
+// TODO: Add some useful error types
 /// Messages that go Server->Client
 pub enum S2C {
     /// The client was an utter and complete moron and should not be trusted (hyperbole)
