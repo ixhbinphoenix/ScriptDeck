@@ -11,7 +11,7 @@ pub enum C2S {
 }
 
 #[derive(Debug, Message)]
-#[rtype("()")]
+#[rtype(result = "()")]
 /// Wrapper for C2SGlobal providing the id of the local handler
 pub struct L2G {
     pub msg: C2SGlobal,
