@@ -3,9 +3,9 @@ use actix::{Actor, Addr, AsyncContext, Context, Recipient, StreamHandler, Handle
 use actix_web::web;
 use actix_web_actors::ws;
 use log::{debug, info, error, warn};
-use rhai::{AST, Dynamic, Engine, ImmutableString};
+use rhai::{AST, Engine};
 
-use crate::proto::{C2S, C2SLocal, C2SGlobal, S2C, L2G};
+use crate::{proto::{C2S, C2SLocal, C2SGlobal, S2C, L2G}, threadpool::{R2G, RunnerPool}};
 use crate::new_shared;
 
 pub type Shared<T> = Arc<RwLock<T>>;
@@ -15,7 +15,7 @@ pub type Shared<T> = Arc<RwLock<T>>;
 /// Receives incoming connections, parses messages and either:
 /// 1. Processes them locally ([proto::C2SLocal])
 /// 2. Passes them to the [Global] handler ([proto::C2SGlobal])
-pub struct Local(pub web::Data<Addr<Global>>, pub usize);
+pub struct Local(pub web::Data<Addr<Global>>, pub u32);
 
 impl Actor for Local {
     type Context = ws::WebsocketContext<Self>;
@@ -97,8 +97,9 @@ impl Handler<S2C> for Local {
 /// Receives messages from the local handlers for operations that might or definelty require global
 /// state, e.g. Rhai Script execution
 pub struct Global {
-    pub sessions: Shared<HashMap<usize, Recipient<S2C>>>,
+    pub sessions: Shared<HashMap<u32, Recipient<S2C>>>,
     pub engine: Engine,
+    pub pool: Shared<RunnerPool>,
     pub ast_cache: HashMap<String, AST>
 }
 
@@ -106,45 +107,14 @@ impl Actor for Global {
     type Context = Context<Self>;
 }
 
-impl Default for Global {
-    fn default() -> Self {
+impl Global {
+    pub fn new(pool: Shared<RunnerPool>) -> Self {
         let mut glob = Self {
             sessions: new_shared!(HashMap::new()),
             engine: Engine::new(),
+            pool,
             ast_cache: HashMap::new()
         };
-
-        let sessions = glob.sessions.clone();
-        glob.engine.register_fn("broadcast", move |msg: ImmutableString| {
-            // Surely this will never panic
-            let sessions = sessions.read().unwrap();
-            for ele in sessions.iter() {
-                ele.1.do_send(S2C::Broadcast { msg: msg.to_string() })
-            }
-        });
-
-        let sessions = glob.sessions.clone();
-        // TODO: Look for a way to just grab the caller id from the running script? Maybe?
-        glob.engine.register_fn("reply", move |msg: ImmutableString, caller: i64| {
-            let sessions = sessions.read().unwrap();
-
-            let id: usize = match caller.try_into() {
-                Ok(a) => a,
-                Err(_) => {
-                    error!("Script called reply with negative caller id");
-                    return
-                },
-            };
-
-            match sessions.get(&id) {
-                Some(a) => {
-                    a.do_send(S2C::Reply { msg: msg.to_string() });
-                },
-                None => {
-                    warn!("Script tried to reply to non-existant caller {}. The Client has probably disconnected.", caller);
-                },
-            }
-        });
 
         let script_dir = fs::read_dir(Self::RHAI_SCRIPT_PATH);
         match script_dir {
@@ -166,9 +136,7 @@ impl Default for Global {
 
         glob
     }
-}
 
-impl Global {
     const RHAI_SCRIPT_PATH: &'static str = "src/rhai/";
 
     /// Load AST and add it to the ast cache
@@ -189,7 +157,7 @@ impl Global {
     const LOCAL_AST_TEMPLATE: &'static str = "let caller_id = $LOCAL_ID;";
 
     /// Loads AST and adds required headers to it, like the caller_id header
-    fn get_script(&mut self, name: &str, local_id: usize) -> anyhow::Result<AST> {
+    fn get_script(&mut self, name: &str, local_id: u32) -> anyhow::Result<AST> {
         let original_ast = match self.ast_cache.get(name) {
             Some(a) => {
                 a.clone()
@@ -205,7 +173,7 @@ impl Global {
         Ok(header_ast.merge(&original_ast))
     }
 
-    fn do_send_to_client(&self, msg: S2C, client_id: usize) {
+    fn do_send_to_client(&self, msg: S2C, client_id: u32) { 
         // If this RwLock ever gets poisoned we're FUCKED
         let sessions = self.sessions.read().unwrap();
         match sessions.get(&client_id) {
@@ -215,6 +183,13 @@ impl Global {
             None => {
                 warn!("Tried to send message {:?} to invalid client {client_id}", msg);
             },
+        }
+    }
+
+    fn do_broadcast(&self, msg: S2C) {
+        let sessions = self.sessions.read().unwrap();
+        for session in sessions.iter() {
+            session.1.do_send(msg.clone());
         }
     }
 }
@@ -239,17 +214,24 @@ impl Handler<L2G> for Global {
                     },
                 };
 
-                match self.engine.eval_ast::<Dynamic>(&script) {
-                    Ok(a) => {
-                        if a.is_string() {
-                            self.do_send_to_client(S2C::Reply { msg: a.into_string().unwrap() }, id);
-                        }
-                    },
-                    Err(e) => {
-                        error!("Error running script: {e}");
-                        self.do_send_to_client(S2C::InternalError, id);
-                    },
-                };
+                self.pool.read().unwrap().execute(script, id);
+            }
+        }
+    }
+}
+
+impl Handler<R2G> for Global {
+    type Result = ();
+    fn handle(&mut self, msg: R2G, _: &mut Self::Context) -> Self::Result {
+        match msg {
+            R2G::Reply(msg, id) => {
+                self.do_send_to_client(S2C::Reply { msg }, id);
+            },
+            R2G::Broadcast(msg) => {
+                self.do_broadcast(S2C::Broadcast { msg });
+            },
+            R2G::InternalError(id) => {
+                self.do_send_to_client(S2C::InternalError, id);
             }
         }
     }
@@ -258,7 +240,7 @@ impl Handler<L2G> for Global {
 #[derive(Message)]
 #[rtype(result = "()")]
 /// Registers a local handler to the global hander with It's address and a randomly generated id
-pub struct Connect(Addr<Local>, usize);
+pub struct Connect(Addr<Local>, u32);
 
 impl Handler<Connect> for Global {
     type Result = ();
@@ -272,7 +254,7 @@ impl Handler<Connect> for Global {
 #[derive(Message)]
 #[rtype(result = "()")]
 /// De-registers a local handler from the global handler using the id of the local handler
-pub struct Disconnect(usize);
+pub struct Disconnect(u32);
 
 impl Handler<Disconnect> for Global {
     type Result = ();
