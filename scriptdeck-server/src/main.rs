@@ -1,4 +1,5 @@
 pub mod proto;
+pub mod threadpool;
 pub mod utils;
 pub mod ws;
 
@@ -9,6 +10,7 @@ use clap::Parser;
 use dotenvy::dotenv;
 use log::debug;
 use rand::Rng;
+use threadpool::RunnerPool;
 
 use crate::ws::{Global, Local};
 
@@ -35,6 +37,8 @@ async fn main() -> std::io::Result<()> {
     } else {
         env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
     }
+
+    let pool = RunnerPool::new(16);
 
     let global = Global::start_default();
 

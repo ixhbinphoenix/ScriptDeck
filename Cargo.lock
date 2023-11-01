@@ -3721,6 +3721,7 @@ dependencies = [
  "actix-web-actors",
  "anyhow",
  "clap",
+ "crossbeam-channel",
  "dotenvy",
  "env_logger",
  "log",
