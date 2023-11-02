@@ -15,7 +15,7 @@ pub enum C2S {
 /// Wrapper for C2SGlobal providing the id of the local handler
 pub struct L2G {
     pub msg: C2SGlobal,
-    pub local_id: usize
+    pub local_id: u32
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -56,5 +56,5 @@ pub enum S2C {
     Reply { msg: String },
     /// Returns the ID of the local handler the client is connected to, and therefore the ID of the
     /// client
-    ClientID { id: usize }
+    ClientID { id: u32 }
 }
