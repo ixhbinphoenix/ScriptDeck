@@ -18,6 +18,9 @@ use crate::ws::{Global, Local};
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
+    /// Amount of Rhai Worker Threads. Defaults to logical cores
+    #[arg(long, default_value_t = std::thread::available_parallelism().unwrap().into())]
+    rhai_threads: usize
 }
 
 async fn index(req: HttpRequest, stream: web::Payload, global: web::Data<Addr<Global>>) -> Result<HttpResponse, Error> {
@@ -28,7 +31,7 @@ async fn index(req: HttpRequest, stream: web::Payload, global: web::Data<Addr<Gl
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    Cli::parse();
+    let args = Cli::parse();
     dotenv().ok();
     if cfg!(debug_assertions) {
         env_logger::init_from_env(env_logger::Env::new().default_filter_or("debug"));
@@ -36,7 +39,7 @@ async fn main() -> std::io::Result<()> {
         env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
     }
 
-    let pool = new_shared!(RunnerPool::new(8));
+    let pool = new_shared!(RunnerPool::new(args.rhai_threads));
     let global = Global::new(Arc::clone(&pool)).start();
     pool.write().unwrap().start(global.clone());
 
