@@ -3,7 +3,7 @@ use std::thread::{JoinHandle, self};
 use actix::{Addr, Message};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use log::{info, error, debug};
-use rhai::{AST, Engine, Dynamic, ImmutableString};
+use rhai::{AST, Engine, Dynamic, ImmutableString, Scope};
 
 use crate::ws::Global;
 
@@ -109,7 +109,9 @@ impl Runner {
                         return;
                     }
                     Pool2Runner::RunRhai(ast, id) => {
-                        match engine.eval_ast::<Dynamic>(&ast) {
+                        let mut scope = Scope::new();
+                        scope.push_constant("caller_id", Into::<i64>::into(id));
+                        match engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast) {
                             Ok(a) => {
                                 if a.is_string() {
                                     global.do_send(R2G::Reply(a.into_string().unwrap(), id));

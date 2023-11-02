@@ -3,7 +3,7 @@ pub mod threadpool;
 pub mod utils;
 pub mod ws;
 
-use std::sync::{Arc, RwLock};
+use std::{sync::{Arc, RwLock}, path::PathBuf};
 
 use actix::{Actor, Addr};
 use actix_web::{HttpServer, App, HttpRequest, web, HttpResponse, Error};
@@ -20,7 +20,11 @@ use crate::ws::{Global, Local};
 struct Cli {
     /// Amount of Rhai Worker Threads. Defaults to logical cores
     #[arg(long, default_value_t = std::thread::available_parallelism().unwrap().into())]
-    rhai_threads: usize
+    rhai_threads: usize,
+
+    /// Specifies the directory for rhai scripts
+    #[arg(long, default_value = "src/rhai/")]
+    rhai_dir: PathBuf
 }
 
 async fn index(req: HttpRequest, stream: web::Payload, global: web::Data<Addr<Global>>) -> Result<HttpResponse, Error> {
@@ -40,7 +44,7 @@ async fn main() -> std::io::Result<()> {
     }
 
     let pool = new_shared!(RunnerPool::new(args.rhai_threads));
-    let global = Global::new(Arc::clone(&pool)).start();
+    let global = Global::new(Arc::clone(&pool), args.rhai_dir).start();
     pool.write().unwrap().start(global.clone());
 
     HttpServer::new(move || {

@@ -100,6 +100,7 @@ pub struct Global {
     pub sessions: Shared<HashMap<u32, Recipient<S2C>>>,
     pub engine: Engine,
     pub pool: Shared<RunnerPool>,
+    pub srcpath: PathBuf,
     pub ast_cache: HashMap<String, AST>
 }
 
@@ -108,15 +109,16 @@ impl Actor for Global {
 }
 
 impl Global {
-    pub fn new(pool: Shared<RunnerPool>) -> Self {
+    pub fn new(pool: Shared<RunnerPool>, srcpath: PathBuf) -> Self {
         let mut glob = Self {
             sessions: new_shared!(HashMap::new()),
             engine: Engine::new(),
             pool,
+            srcpath: srcpath.clone(),
             ast_cache: HashMap::new()
         };
 
-        let script_dir = fs::read_dir(Self::RHAI_SCRIPT_PATH);
+        let script_dir = fs::read_dir(srcpath);
         match script_dir {
             Ok(dir) => {
                 for ele in dir {
@@ -137,13 +139,10 @@ impl Global {
         glob
     }
 
-    const RHAI_SCRIPT_PATH: &'static str = "src/rhai/";
-
     /// Load AST and add it to the ast cache
-    /// Do not use this function to directly execute the resulting AST as it does not add the Local
-    /// id to the header
+    /// Do not use this function directly as it does not load from cache
     fn load_script(&mut self, name: &str) -> anyhow::Result<AST> {
-        let path: PathBuf = (Self::RHAI_SCRIPT_PATH.to_string() + name).into();
+        let path: PathBuf = self.srcpath.clone().join(name);
 
         let ast = self.engine.compile_file(path)?;
 
@@ -154,25 +153,19 @@ impl Global {
         Ok(ast)
     }
 
-    const LOCAL_AST_TEMPLATE: &'static str = "let caller_id = $LOCAL_ID;";
-
-    /// Loads AST and adds required headers to it, like the caller_id header
-    fn get_script(&mut self, name: &str, local_id: u32) -> anyhow::Result<AST> {
-        let original_ast = match self.ast_cache.get(name) {
+    /// Get AST from either cache or fs
+    fn get_script(&mut self, name: &str) -> anyhow::Result<AST> {
+        match self.ast_cache.get(name) {
             Some(a) => {
-                a.clone()
+                Ok(a.clone())
             },
             None => {
-                self.load_script(name)?
+                Ok(self.load_script(name)?)
             },
-        };
-
-        let local_header = Self::LOCAL_AST_TEMPLATE.replace("$LOCAL_ID", format!("{}", local_id).as_str());
-        let header_ast = self.engine.compile(local_header)?;
-
-        Ok(header_ast.merge(&original_ast))
+        }
     }
 
+    /// Send a message to a specific client and ignores the result
     fn do_send_to_client(&self, msg: S2C, client_id: u32) { 
         // If this RwLock ever gets poisoned we're FUCKED
         let sessions = self.sessions.read().unwrap();
@@ -186,6 +179,7 @@ impl Global {
         }
     }
 
+    /// Send a message to all connected clients and ignore all results
     fn do_broadcast(&self, msg: S2C) {
         let sessions = self.sessions.read().unwrap();
         for session in sessions.iter() {
@@ -204,7 +198,7 @@ impl Handler<L2G> for Global {
         use C2SGlobal as MSG;
         match msg {
             MSG::RunScript { script } => {
-                let script = match self.get_script(&script, id) {
+                let script = match self.get_script(&script) {
                     Ok(a) => a,
                     Err(e) => {
                         warn!("Error loading script {script}: {e}");
