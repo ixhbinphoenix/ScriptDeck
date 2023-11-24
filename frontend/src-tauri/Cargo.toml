@@ -3,8 +3,8 @@ name = "ScriptDeck"
 version = "0.1.0"
 description = ""
 authors = ["ixhbinphoenix"]
-license = ""
-repository = "https://github.com/ixhbinphoenix/ScriptDeck"
+license = "GPL-3.0-only"
+repository = "https://git.ixhby.dev/ixhbinphoenix/ScriptDeck"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

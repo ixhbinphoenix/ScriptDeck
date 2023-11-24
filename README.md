@@ -16,4 +16,5 @@ Written purely in rust with a sprinkle of rhai
 
 ## License
 
-This Project is licensed under the GPL-3.0, which can be found either [here](./LICENSE) or on [https://www.gnu.org/licenses/gpl-3.0.html](https://www.gnu.org/licenses/gpl-3.0.html)
+The scriptdeck icon is licensed under [Attribution-ShareAlike 4.0 International](https://creativecommons.org/licenses/by-sa/4.0/?ref=chooser-v1) (CC BY-SA 4.0)
+The rest of this Project is licensed under the GPL-3.0, which can be found either [here](./LICENSE-GPL) or on [https://www.gnu.org/licenses/gpl-3.0.html](https://www.gnu.org/licenses/gpl-3.0.html)

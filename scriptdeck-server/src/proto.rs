@@ -3,7 +3,6 @@ use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-// If i determine that the global/local split is useless, this should just be C2SGlobal
 /// Messages that go Client->Server
 pub enum C2S {
     Global(C2SGlobal),
@@ -31,7 +30,6 @@ pub enum C2SGlobal {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
-// Not sure if this is needed, copying from test project
 pub enum C2SLocal {
     /// Gets the ID of the Local handler that the client is connected to, and therefore the ID of
     /// the client
